@@ -1,5 +1,6 @@
 module Lift
 
+import Data.HVect
 import Data.Vect
 
 %default total
@@ -45,62 +46,65 @@ insertElem {n=Z} {vs = []} prf = There prf
 insertElem {n=(S k)} {vs = (x :: xs)} Here = Here
 insertElem {n=(S k)} {vs = (x :: xs)} (There later) = There (insertElem {n=k} later)
 
+deleteElem
+  : (n : Nat)
+  -> {vs : Vect n Ty}
+  -> Elem ty (vs ++ v :: vs')
+  -> Maybe (Elem ty (vs ++ vs'))
+deleteElem Z {vs = []} Here = Nothing
+deleteElem Z {vs = []} (There later) = Just later
+deleteElem (S k) {vs = (x :: xs)} Here = Just Here
+deleteElem (S k) {vs = (x :: xs)} (There later) = There <$> deleteElem k later
+
 deassocBinders : Tm (a ++ b ++ c) ty -> Tm ((a ++ b) ++ c) ty
 deassocBinders {a} {b} {c} tm = rewrite sym (vectAppendAssociative a b c) in tm
 
 assocBinders : Tm ((a ++ b) ++ c) ty -> Tm (a ++ b ++ c) ty
 assocBinders {a} {b} {c} tm = rewrite vectAppendAssociative a b c in tm
 
-mutual
-  expandScopeLam
-     : (tele : Tele vs ret ty)
-    -> (tm : Tm (vs ++ vs') ret)
-    -> Tm (vs ++ (v :: vs')) ret
-  expandScopeLam tele (Var ix) = Var (insertElem ix)
-  expandScopeLam tele (Name s) = Name s
-  expandScopeLam tele (Lam tele' tm) = ?h1_3
-  expandScopeLam tele (App f x) = App ?h11 ?h22
-
-  expandScope : Tm vs ty -> Tm (v :: vs) ty
-  expandScope (Var x) = Var (There x)
-  expandScope (Name x) = Name x
-  expandScope (Lam tele x) = Lam tele (expandScopeLam tele x)
-  expandScope (App x y) = App (expandScope x) (expandScope y)
-
-             {-
-expandScopeLam
-   : (tele : Tele vs r ty)
-  -> Tm (vs ++ vs') r
-  -> Tm (vs ++ v :: vs') r
-expandScopeLam {v} {vs} {vs'} tele (Var x) =
-  Var (insertElem {v} {vs} {vs'} x)
-expandScopeLam tele (Name x) = Name x
-expandScopeLam tele (Lam k x) =
-  Lam k {vs=vs1} {tele=?hhh} $
+expandScope : Tm (vs ++ vs') ty -> Tm (vs ++ v :: vs') ty
+expandScope (Var x) = Var (insertElem x)
+expandScope (Name x) = Name x
+expandScope (Lam tele x) =
+  Lam tele $
   assocBinders $
-  expandScopeLam {v} {vs'} (k + n) {vs=(vs1 ++ vs)} $
-  assert_smaller (Lam k x) (deassocBinders x)
-expandScopeLam tele (App x y) = App (?h1 x) (expandScopeLam ?hhh y)
+  expandScope $
+  assert_smaller (Lam tele x) (deassocBinders x)
+expandScope (App x y) = App (expandScope x) (expandScope y)
 
+chooseElem : Elem x (xs ++ ys) -> Either (Elem x xs) (Elem x ys)
+chooseElem {xs = []} {ys = (x :: xs)} prf = Right prf
+chooseElem {xs = (x :: xs)} {ys = ys} Here = Left Here
+chooseElem {xs = (x :: xs)} {ys = ys} (There later) =
+  case chooseElem later of
+    Left prf => Left (There prf)
+    Right prf => Right prf
 
--- ripAndTearLam : Tm (vs ++ v :: vs') ty -> 
+freeVars
+   : Tm (vs ++ vs') ty
+  -> List (DPair Ty (Tm vs'))
+freeVars (Var x) =
+  case chooseElem x of
+    Left prf => []
+    Right prf => [(_ ** Var prf)]
+freeVars (Name x) = []
+freeVars (Lam tele y) =
+  freeVars $
+  assert_smaller (Lam tele y) (deassocBinders y)
+freeVars (App x y) = freeVars x ++ freeVars y
 
-ripAndTear : Tm (v :: vs) ty -> Tm vs (TArr v ty)
-ripAndTear {v} (Var Here) =
-  Lam {vs=[v]} 1 $ Var Here
-ripAndTear {v} (Var (There later)) =
-  Lam {vs=[v]} 1 $ Var (There later)
-ripAndTear {v} (Name x) = Lam {vs=[v]} 1 (Name x)
-ripAndTear {v} {vs} (Lam n x) = ?hh
-ripAndTear {v} {vs} {ty} (App {a} x y) =
-  Lam {vs=[v]} 1 $
-  App (App (expandScope x') (Var Here)) (App (expandScope y') (Var Here))
-  where
-    x' : Tm vs (TArr v (TArr a ty))
-    x' = ripAndTear x
+testTm : Tm [TUnit] (TArr TUnit TUnit)
+testTm =
+  Lam (TeleMore TeleDone) $
+  Var (There Here)
 
-    y' : Tm vs (TArr v a)
-    y' = ripAndTear y
+closeInner
+   : Tm vs out
+  -> Tm vs out
+closeInner (Var x) = Var x
+closeInner (Name x) = Name x
+closeInner (Lam tele x) = ?hh
+closeInner (App x y) = App (closeInner x) (closeInner y)
 
 liftLambdas : Stream String -> Tm vs ty -> (Stream String, Tm vs ty, List Def)
 liftLambdas supply (Var ix) = (supply, Var ix, [])
@@ -115,4 +119,3 @@ liftLambdas supply (App x y) =
     (supply', x', defs1) =>
       case liftLambdas supply' y of
         (supply'', y', defs2) => (supply'', App x' y', defs1 ++ defs2)
--}
