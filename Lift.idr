@@ -98,13 +98,51 @@ testTm =
   Lam (TeleMore TeleDone) $
   Var (There Here)
 
-closeInner
-   : Tm vs out
-  -> Tm vs out
-closeInner (Var x) = Var x
-closeInner (Name x) = Name x
-closeInner (Lam tele x) = ?hh
-closeInner (App x y) = App (closeInner x) (closeInner y)
+widenElemR : Elem x xs -> Elem x (xs ++ ys)
+widenElemR Here = Here
+widenElemR (There prf) = There (widenElemR prf)
+
+widenElemL : Elem y ys -> Elem y (xs ++ ys)
+widenElemL {xs = []} prf = prf
+widenElemL {xs = (x :: xs)} prf = There (widenElemL {xs} prf)
+
+assocElem : Elem x ((a ++ b) ++ c) -> Elem x (a ++ b ++ c)
+assocElem {a} {b} {c} prf = rewrite vectAppendAssociative a b c in prf
+
+shift : Tm (a ++ c) ty -> Tm (a ++ b ++ c) ty
+shift (Var x) =
+  case chooseElem x of
+    Left prf => Var (widenElemR prf)
+    Right prf => Var (assocElem (widenElemL prf))
+shift (Name x) = Name x
+shift (Lam tele x) =
+  Lam tele $
+  assocBinders $
+  shift $
+  assert_smaller (Lam tele x) (deassocBinders x)
+shift (App x y) = App (shift x) (shift y)
+
+shift_ : Tm b ty -> Tm (a ++ b) ty
+shift_ = shift {a=[]}
+
+instantiate
+   : Tm (vs ++ vs') v
+  -> Tm (vs ++ v :: vs') ty
+  -> Tm (vs ++ vs') ty
+instantiate sub (Var x) =
+  case chooseElem x of
+    Left prf => Var (widenElemR prf)
+    Right prf =>
+      case prf of
+        Here => sub
+        There prf' => Var (widenElemL prf')
+instantiate sub (Name x) = Name x
+instantiate sub (Lam tele x) =
+  Lam tele $
+  assocBinders $
+  instantiate (deassocBinders (shift_ sub)) $
+  assert_smaller (Lam tele x) (deassocBinders x)
+instantiate sub (App x y) = App (instantiate sub x) (instantiate sub y)
 
 liftLambdas : Stream String -> Tm vs ty -> (Stream String, Tm vs ty, List Def)
 liftLambdas supply (Var ix) = (supply, Var ix, [])
